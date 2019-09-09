@@ -630,8 +630,8 @@ class MSG_GAN:
                         batch_counter == 1:
                     elapsed = time.time() - global_time
                     elapsed = str(datetime.timedelta(seconds=elapsed))
-                    print("Elapsed [%s] batch: %d  d_loss: %f  g_loss: %f"
-                          % (elapsed, batch_counter, dis_loss, gen_loss))
+                    print("Elapsed [%s] batch: %d/%d  d_loss: %f  g_loss: %f"
+                          % (elapsed, batch_counter, limit, dis_loss, gen_loss))
 
                     # add summary of the losses
                     sum_writer.add_scalar("dis_loss", dis_loss, global_step)
@@ -646,10 +646,7 @@ class MSG_GAN:
                                       "\t" + str(gen_loss) + "\n")
 
                     # create a grid of samples and save it
-                    gen_img_files = [os.path.join(sample_dir, res, "gen_" +
-                                                  str(epoch) + "_" +
-                                                  str(batch_counter) + ".png")
-                                     for res in reses]
+                    gen_img_files = [os.path.join(sample_dir, res, "gen_{:06}_{:06}.png".format(epoch, batch_counter))                                                  for res in reses]
 
                     # Make sure all the required directories exist
                     # otherwise make them
@@ -677,12 +674,12 @@ class MSG_GAN:
 
             if epoch % checkpoint_factor == 0 or epoch == 1 or epoch == num_epochs:
                 os.makedirs(save_dir, exist_ok=True)
-                gen_save_file = os.path.join(save_dir, "GAN_GEN_" + str(epoch) + ".pth")
-                dis_save_file = os.path.join(save_dir, "GAN_DIS_" + str(epoch) + ".pth")
+                gen_save_file = os.path.join(save_dir, "GAN_GEN_{:06}.pth".format(epoch))
+                dis_save_file = os.path.join(save_dir, "GAN_DIS_{:06}.pth".format(epoch))
                 gen_optim_save_file = os.path.join(save_dir,
-                                                   "GAN_GEN_OPTIM_" + str(epoch) + ".pth")
+                                                   "GAN_GEN_OPTIM_{:06}.pth".format(epoch))
                 dis_optim_save_file = os.path.join(save_dir,
-                                                   "GAN_DIS_OPTIM_" + str(epoch) + ".pth")
+                                                   "GAN_DIS_OPTIM_{:06}".format(epoch))
 
                 th.save(self.gen.state_dict(), gen_save_file)
                 th.save(self.dis.state_dict(), dis_save_file)
@@ -690,8 +687,7 @@ class MSG_GAN:
                 th.save(dis_optim.state_dict(), dis_optim_save_file)
 
                 if self.use_ema:
-                    gen_shadow_save_file = os.path.join(save_dir, "GAN_GEN_SHADOW_"
-                                                        + str(epoch) + ".pth")
+                    gen_shadow_save_file = os.path.join(save_dir, "GAN_GEN_SHADOW_{:06}.pth".format(epoch))
                     th.save(self.gen_shadow.state_dict(), gen_shadow_save_file)
 
                 print("log_fid_values:", log_fid_values)
@@ -724,7 +720,7 @@ class MSG_GAN:
                         pbar.update(b_size)
                         for img in imgs:
                             imsave(os.path.join(fid_temp_folder,
-                                                str(generated_images) + ".jpg"),
+                                                "{:07}.jpg".format(generated_images)),
                                    img.permute(1, 2, 0).cpu())
                             generated_images += 1
                     pbar.close()
