@@ -234,6 +234,10 @@ def main(args):
     print("Generator Configuration: ")
     print(msg_gan.gen)
 
+    netG_param_count = sum(p.numel() for p in msg_gan.gen.parameters())
+    netG_trainable_param_count = sum(p.numel() for p in msg_gan.gen.parameters() if p.requires_grad)
+    print("\nNum params: {:,}\nNum Trainable Params: {:,}\n\n".format(netG_param_count, netG_trainable_param_count))
+
     if args.shadow_generator_file is not None:
         # load the weights into generator
         print("loading shadow_generator_weights from:",
@@ -248,6 +252,10 @@ def main(args):
 
     print("Discriminator Configuration: ")
     print(msg_gan.dis)
+
+    netG_param_count = sum(p.numel() for p in msg_gan.dis.parameters())
+    netG_trainable_param_count = sum(p.numel() for p in msg_gan.dis.parameters() if p.requires_grad)
+    print("\nNum params: {:,}\nNum Trainable Params: {:,}\n\n".format(netG_param_count, netG_trainable_param_count))
 
     # create optimizer for generator:
     gen_optim = th.optim.Adam(msg_gan.gen.parameters(), args.g_lr,
