@@ -679,7 +679,7 @@ class MSG_GAN:
                 gen_optim_save_file = os.path.join(save_dir,
                                                    "GAN_GEN_OPTIM_{:06}.pth".format(epoch))
                 dis_optim_save_file = os.path.join(save_dir,
-                                                   "GAN_DIS_OPTIM_{:06}".format(epoch))
+                                                   "GAN_DIS_OPTIM_{:06}.pth".format(epoch))
 
                 th.save(self.gen.state_dict(), gen_save_file)
                 th.save(self.dis.state_dict(), dis_save_file)
