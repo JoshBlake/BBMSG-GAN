@@ -175,6 +175,14 @@ def parse_arguments():
                         default=64,
                         help="Batch size used for the fid computation" +
                              "(Both image generation and fid calculation)")
+    
+    parser.add_argument("--opt-level", action="store", type=str,
+                        default="O0",
+                        help="Auto-mixed precision optimization level: " +
+                             "'O0' = F32," +
+                             "'O1' = F32 weights, F16 ops, F32 batch norm" +
+                             "'O2' = F16 weights w/ F32 master weights, F16 ops, F32 batch norm" +
+                             "'O3' = F16 weights, F16 ops, F16 batch norm")
 
     # ========================================================================================
 
@@ -309,7 +317,8 @@ def main(args):
         num_fid_images=args.num_fid_images,
         fid_temp_folder=args.fid_temp_folder,
         fid_real_stats=args.fid_real_stats,
-        fid_batch_size=args.fid_batch_size
+        fid_batch_size=args.fid_batch_size,
+        opt_level=args.opt_level
     )
 
 

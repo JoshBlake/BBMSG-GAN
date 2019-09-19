@@ -8,12 +8,18 @@ import timeit
 import copy
 import numpy as np
 import torch as th
+from shutil import copyfile
 
+try:
+    from apex import amp
+    APEX_AVAILABLE = True
+except ModuleNotFoundError:
+    APEX_AVAILABLE = False
 
 class Generator(th.nn.Module):
     """ Generator of the GAN network """
 
-    def __init__(self, depth=7, latent_size=512, use_eql=True):
+    def __init__(self, depth=7, latent_size=512, use_eql=True, use_amp=APEX_AVAILABLE):
         """
         constructor for the Generator class
         :param depth: required depth of the Network
@@ -35,7 +41,8 @@ class Generator(th.nn.Module):
         self.use_eql = use_eql
         self.depth = depth
         self.latent_size = latent_size
-
+        self.use_amp = use_amp
+        
         # register the modules required for the Generator Below ...
         # create the ToRGB layers for various outputs:
         if self.use_eql:
@@ -44,7 +51,7 @@ class Generator(th.nn.Module):
         else:
             def to_rgb(in_channels):
                 return Conv2d(in_channels, 3, (1, 1), bias=True)
-
+            
         # create a module list of the other required general convolution blocks
         self.layers = ModuleList([GenInitialBlock(self.latent_size, use_eql=self.use_eql)])
         self.rgb_converters = ModuleList([to_rgb(self.latent_size)])
@@ -101,7 +108,7 @@ class Discriminator(th.nn.Module):
     """ Discriminator of the GAN """
 
     def __init__(self, depth=7, feature_size=512,
-                 use_eql=True, gpu_parallelize=False):
+                 use_eql=True, gpu_parallelize=False, use_amp=APEX_AVAILABLE):
         """
         constructor for the class
         :param depth: total depth of the discriminator
@@ -131,6 +138,7 @@ class Discriminator(th.nn.Module):
         self.use_eql = use_eql
         self.depth = depth
         self.feature_size = feature_size
+        self.use_amp = use_amp
 
         # create the fromRGB layers for various inputs:
         if self.use_eql:
@@ -227,19 +235,19 @@ class MSG_GAN:
 
     def __init__(self, depth=7, latent_size=512,
                  use_eql=True, use_ema=True, ema_decay=0.999,
-                 device=th.device("cpu")):
+                 device=th.device("cpu"), use_amp=APEX_AVAILABLE):
         """ constructor for the class """
         from torch.nn import DataParallel
 
-        self.gen = Generator(depth, latent_size, use_eql=use_eql).to(device)
+        self.gen = Generator(depth, latent_size, use_eql=use_eql, use_amp=use_amp).to(device)
 
         # Parallelize them if required:
         if device == th.device("cuda"):
             self.gen = DataParallel(self.gen)
             self.dis = Discriminator(depth, latent_size,
-                                     use_eql=use_eql, gpu_parallelize=True).to(device)
+                                     use_eql=use_eql, gpu_parallelize=True, use_amp=use_amp).to(device)
         else:
-            self.dis = Discriminator(depth, latent_size, use_eql=True).to(device)
+            self.dis = Discriminator(depth, latent_size, use_eql=True, use_amp=use_amp).to(device)
 
         # state of the object
         self.use_ema = use_ema
@@ -248,6 +256,7 @@ class MSG_GAN:
         self.latent_size = latent_size
         self.depth = depth
         self.device = device
+        self.use_amp = use_amp
 
         if self.use_ema:
             from MSG_GAN.CustomLayers import update_average
@@ -286,7 +295,7 @@ class MSG_GAN:
     def optimize_discriminator(self, dis_optim, noise,
                                real_batch, loss_fn,
                                accumulate=False, zero_grad=True,
-                               num_accumulations=1):
+                               num_accumulations=1, loss_id=0):
         """
         performs one step of weight update on discriminator using the batch of data
         :param dis_optim: discriminator optimizer
@@ -315,7 +324,11 @@ class MSG_GAN:
             dis_optim.zero_grad()
 
         # perform the backward pass to accumulate the gradients
-        loss.backward()
+        if self.use_amp:
+            with amp.scale_loss(loss, dis_optim, loss_id=loss_id) as scaled_loss:
+                scaled_loss.backward()
+        else:
+            loss.backward()
 
         # if not running in accumulate mode, (make a step)
         if not accumulate:
@@ -326,7 +339,7 @@ class MSG_GAN:
     def optimize_generator(self, gen_optim, noise,
                            real_batch, loss_fn,
                            accumulate=False, zero_grad=True,
-                           num_accumulations=1):
+                           num_accumulations=1, loss_id=1):
         """
         performs one step of weight update on generator using the batch of data
         :param gen_optim: generator optimizer
@@ -351,7 +364,11 @@ class MSG_GAN:
             gen_optim.zero_grad()
 
         # perform backward pass for gradient accumulation
-        loss.backward()
+        if self.use_amp:
+            with amp.scale_loss(loss, gen_optim, loss_id=loss_id) as scaled_loss:
+                scaled_loss.backward()
+        else:
+            loss.backward()
 
         # perform an update step if not running in the accumulate mode
         if not accumulate:
@@ -448,7 +465,8 @@ class MSG_GAN:
               log_dir=None, sample_dir="./samples", 
               log_fid_values=False, num_fid_images=50000,
               save_dir="./models", fid_temp_folder="./samples/fid_imgs/",
-              fid_real_stats=None, fid_batch_size=64):
+              fid_real_stats=None, fid_batch_size=64,
+              opt_level="O0"):
         """
         Method for training the network
         :param data: pytorch dataloader which iterates over images
@@ -478,6 +496,11 @@ class MSG_GAN:
         :param fid_real_stats: path to the npz stats file for real images
         :param fid_batch_size: batch size used for generating fid images
                                Same will be used for calculating the fid too.
+        :param opt_level: APEX Amp optimization level: 
+                            "O0" = F32, 
+                            "O1" = F32 weights, F16 ops, F32 batch norm
+                            "O2" = F16 weights w/ F32 master weights, F16 ops, F32 batch norm
+                            "O3" = F16 weights, F16 ops, F16 batch norm
         :return: None (writes multiple files to disk)
         """
         from tensorboardX import SummaryWriter
@@ -491,13 +514,18 @@ class MSG_GAN:
         # turn the generator and discriminator into train mode
         self.gen.train()
         self.dis.train()
-
+            
         assert isinstance(gen_optim, th.optim.Optimizer), \
             "gen_optim is not an Optimizer"
         assert isinstance(dis_optim, th.optim.Optimizer), \
             "dis_optim is not an Optimizer"
 
         print("Starting the training process ... ")
+
+        [self.dis, self.gen], [dis_optim, gen_optim] = amp.initialize(
+            [self.dis, self.gen], [dis_optim, gen_optim], 
+            opt_level=opt_level, 
+            num_losses=2)
 
         # create the summary writer
         sum_writer = SummaryWriter(os.path.join(log_dir, "tensorboard"))
@@ -672,6 +700,24 @@ class MSG_GAN:
             stop_time = timeit.default_timer()
             print("Time taken for epoch: %.3f secs" % (stop_time - start_time))
 
+            # save the latest checkpoint every epoch
+            os.makedirs(save_dir, exist_ok=True)
+            gen_latest_save_file = os.path.join(save_dir, "GAN_GEN_latest.pth")
+            dis_latest_save_file = os.path.join(save_dir, "GAN_DIS_latest.pth")
+            gen_latest_optim_save_file = os.path.join(save_dir,
+                                               "GAN_GEN_OPTIM_latest.pth")
+            dis_latest_optim_save_file = os.path.join(save_dir,
+                                               "GAN_DIS_OPTIM_latest.pth")
+
+            th.save(self.gen.state_dict(), gen_latest_save_file)
+            th.save(self.dis.state_dict(), dis_latest_save_file)
+            th.save(gen_optim.state_dict(), gen_latest_optim_save_file)
+            th.save(dis_optim.state_dict(), dis_latest_optim_save_file)
+
+            if self.use_ema:
+                gen_shadow_save_file = os.path.join(save_dir, "GAN_GEN_SHADOW_latest.pth")
+                th.save(self.gen_shadow.state_dict(), gen_latest_shadow_save_file)
+
             if epoch % checkpoint_factor == 0 or epoch == 1 or epoch == num_epochs:
                 os.makedirs(save_dir, exist_ok=True)
                 gen_save_file = os.path.join(save_dir, "GAN_GEN_{:06}.pth".format(epoch))
@@ -681,14 +727,15 @@ class MSG_GAN:
                 dis_optim_save_file = os.path.join(save_dir,
                                                    "GAN_DIS_OPTIM_{:06}.pth".format(epoch))
 
-                th.save(self.gen.state_dict(), gen_save_file)
-                th.save(self.dis.state_dict(), dis_save_file)
-                th.save(gen_optim.state_dict(), gen_optim_save_file)
-                th.save(dis_optim.state_dict(), dis_optim_save_file)
+                # Copy save files here to numbered filename at specified checkpoints
+                copyfile(gen_latest_save_file, gen_save_file)
+                copyfile(dis_latest_save_file, dis_save_file)
+                copyfile(gen_latest_optim_save_file, gen_optim_save_file)
+                copyfile(dis_latest_optim_save_file,  dis_optim_save_file)
 
                 if self.use_ema:
                     gen_shadow_save_file = os.path.join(save_dir, "GAN_GEN_SHADOW_{:06}.pth".format(epoch))
-                    th.save(self.gen_shadow.state_dict(), gen_shadow_save_file)
+                    copyfile(gen_latest_shadow_save_file, gen_shadow_save_file)
 
                 print("log_fid_values:", log_fid_values)
                 if log_fid_values:  # perform the following fid calculations during training 
