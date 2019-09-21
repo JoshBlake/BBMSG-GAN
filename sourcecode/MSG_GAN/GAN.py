@@ -241,11 +241,14 @@ class MSG_GAN:
 
         self.gen = Generator(depth, latent_size, use_eql=use_eql, use_amp=use_amp).to(device)
 
+        gpu_parallelize=False
+        
         # Parallelize them if required:
         if device == th.device("cuda"):
-            self.gen = DataParallel(self.gen)
+            if gpu_parallelize:
+                self.gen = DataParallel(self.gen)
             self.dis = Discriminator(depth, latent_size,
-                                     use_eql=use_eql, gpu_parallelize=True, use_amp=use_amp).to(device)
+                                     use_eql=use_eql, gpu_parallelize=gpu_parallelize, use_amp=use_amp).to(device)
         else:
             self.dis = Discriminator(depth, latent_size, use_eql=True, use_amp=use_amp).to(device)
 
@@ -522,8 +525,8 @@ class MSG_GAN:
 
         print("Starting the training process ... ")
 
-        [self.dis, self.gen], [dis_optim, gen_optim] = amp.initialize(
-            [self.dis, self.gen], [dis_optim, gen_optim], 
+        [self.dis, self.gen, self.gen_shadow], [dis_optim, gen_optim] = amp.initialize(
+            [self.dis, self.gen, self.gen_shadow], [dis_optim, gen_optim], 
             opt_level=opt_level, 
             num_losses=2)
 
@@ -715,7 +718,7 @@ class MSG_GAN:
             th.save(dis_optim.state_dict(), dis_latest_optim_save_file)
 
             if self.use_ema:
-                gen_shadow_save_file = os.path.join(save_dir, "GAN_GEN_SHADOW_latest.pth")
+                gen_latest_shadow_save_file = os.path.join(save_dir, "GAN_GEN_SHADOW_latest.pth")
                 th.save(self.gen_shadow.state_dict(), gen_latest_shadow_save_file)
 
             if epoch % checkpoint_factor == 0 or epoch == 1 or epoch == num_epochs:
