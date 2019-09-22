@@ -239,7 +239,14 @@ class MSG_GAN:
         """ constructor for the class """
         from torch.nn import DataParallel
 
-        self.gen = Generator(depth, latent_size, use_eql=use_eql, use_amp=use_amp).to(device)
+        self.use_amp = use_amp and APEX_AVAILABLE
+
+        if self.use_amp:
+            print("MSG_GAN: use_amp enabled")
+        else:
+            print("MSG_GAN: use_amp disabled")
+
+        self.gen = Generator(depth, latent_size, use_eql=use_eql, use_amp=self.use_amp).to(device)
 
         gpu_parallelize=False
         
@@ -250,7 +257,7 @@ class MSG_GAN:
             self.dis = Discriminator(depth, latent_size,
                                      use_eql=use_eql, gpu_parallelize=gpu_parallelize, use_amp=use_amp).to(device)
         else:
-            self.dis = Discriminator(depth, latent_size, use_eql=True, use_amp=use_amp).to(device)
+            self.dis = Discriminator(depth, latent_size, use_eql=True, use_amp=self.use_amp).to(device)
 
         # state of the object
         self.use_ema = use_ema
@@ -259,7 +266,6 @@ class MSG_GAN:
         self.latent_size = latent_size
         self.depth = depth
         self.device = device
-        self.use_amp = use_amp
 
         if self.use_ema:
             from MSG_GAN.CustomLayers import update_average
@@ -525,10 +531,17 @@ class MSG_GAN:
 
         print("Starting the training process ... ")
 
-        [self.dis, self.gen, self.gen_shadow], [dis_optim, gen_optim] = amp.initialize(
-            [self.dis, self.gen, self.gen_shadow], [dis_optim, gen_optim], 
-            opt_level=opt_level, 
-            num_losses=2)
+        if self.use_amp:
+            if self.use_ema:
+                [self.dis, self.gen, self.gen_shadow], [dis_optim, gen_optim] = amp.initialize(
+                    [self.dis, self.gen, self.gen_shadow], [dis_optim, gen_optim], 
+                    opt_level=opt_level, 
+                    num_losses=2)
+            else:
+                [self.dis, self.gen], [dis_optim, gen_optim] = amp.initialize(
+                    [self.dis, self.gen], [dis_optim, gen_optim], 
+                    opt_level=opt_level, 
+                    num_losses=2)
 
         # create the summary writer
         sum_writer = SummaryWriter(os.path.join(log_dir, "tensorboard"))

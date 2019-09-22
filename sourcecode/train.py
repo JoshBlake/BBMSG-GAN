@@ -5,6 +5,7 @@ import argparse
 import numpy as np
 import torch as th
 from torch.backends import cudnn
+from str2bool import str2bool
 
 # define the device for the training script
 device = th.device("cuda" if th.cuda.is_available() else "cpu")
@@ -130,13 +131,17 @@ def parse_arguments():
                         default=0.99,
                         help="value of beta_2 for adam optimizer")
 
-    parser.add_argument("--use_eql", action="store", type=bool,
-                        default=True,
+    parser.add_argument("--use_eql", action="store", type=str,
+                        default='True',
                         help="Whether to use equalized learning rate or not")
 
-    parser.add_argument("--use_ema", action="store", type=bool,
-                        default=True,
+    parser.add_argument("--use_ema", action="store", type=str,
+                        default='True',
                         help="Whether to use exponential moving averages or not")
+
+    parser.add_argument("--use_amp", action="store", type=str,
+                        default='False',
+                        help="Whether to enable Automatic Mixed Precision (enables --opt-level parsing)")
 
     parser.add_argument("--ema_decay", action="store", type=float,
                         default=0.999,
@@ -149,6 +154,14 @@ def parse_arguments():
     parser.add_argument("--num_workers", action="store", type=int,
                         default=3,
                         help="number of parallel workers for reading files")
+
+    parser.add_argument("--opt-level", action="store", type=str,
+                        default="O0",
+                        help="Auto-mixed precision optimization level: " +
+                             "'O0' = F32," +
+                             "'O1' = F32 weights, F16 ops, F32 batch norm" +
+                             "'O2' = F16 weights w/ F32 master weights, F16 ops, F32 batch norm" +
+                             "'O3' = F16 weights, F16 ops, F16 batch norm")
 
     # =======================================================================================
     # FID RELATED ARGUMENTS ... :)
@@ -176,14 +189,6 @@ def parse_arguments():
                         help="Batch size used for the fid computation" +
                              "(Both image generation and fid calculation)")
     
-    parser.add_argument("--opt-level", action="store", type=str,
-                        default="O0",
-                        help="Auto-mixed precision optimization level: " +
-                             "'O0' = F32," +
-                             "'O1' = F32 weights, F16 ops, F32 batch norm" +
-                             "'O2' = F16 weights w/ F32 master weights, F16 ops, F32 batch norm" +
-                             "'O3' = F16 weights, F16 ops, F16 batch norm")
-
     # ========================================================================================
 
     args = parser.parse_args()
@@ -197,6 +202,24 @@ def main(args):
     :param args: parsed command line arguments
     :return: None
     """
+    args.use_ema = str2bool(args.use_ema, raise_exc=True)
+    args.use_eql = str2bool(args.use_eql, raise_exc=True)
+    args.use_amp = str2bool(args.use_amp, raise_exc=True)
+    if args.use_ema:
+        print("use_ema enabled")
+    else:
+        print("use_ema disabled")
+
+    if args.use_eql:
+        print("use_eql enabled")
+    else:
+        print("use_eql disabled")
+
+    if args.use_amp:
+        print("use_amp enabled, opt_level: {}".format(args.opt_level))
+    else:
+        print("use_amp disabled")
+
     from MSG_GAN.GAN import MSG_GAN
     from data_processing.DataLoader import FlatDirectoryImageDataset, \
         get_transform, get_data_loader, FoldersDistributedDataset, IgnoreLabels
@@ -232,7 +255,8 @@ def main(args):
                       use_eql=args.use_eql,
                       use_ema=args.use_ema,
                       ema_decay=args.ema_decay,
-                      device=device)
+                      device=device,
+                      use_amp=args.use_amp)
 
     if args.generator_file is not None:
         # load the weights into generator
